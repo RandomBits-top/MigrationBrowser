@@ -24,7 +24,7 @@ jobs:
       - name: Restore
         run: dotnet restore MigrationBrowser.csproj -r win-x64
       - name: Build
-        run: dotnet build MigrationBrowser.csproj -c Release -r win-x64 --no-restore
+        run: dotnet build MigrationBrowser.csproj -c Release -r win-x64 -p:SelfContained=true --no-restore
       - name: Publish single-file EXE (win-x64)
         run: |
           rm -Recurse -Force ./artifacts -ErrorAction SilentlyContinue
