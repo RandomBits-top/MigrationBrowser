@@ -1,11 +1,12 @@
 ﻿using Microsoft.Win32;
+using System;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 
 namespace MigrationBrowser
 {
-    internal class Program
+    internal static class Program
     {
         // --------------------------------------------------------------------
         // Configuration
@@ -19,31 +20,32 @@ namespace MigrationBrowser
         // --------------------------------------------------------------------
         static int Main(string[] args)
         {
-            // ------------------------------------------------------------
-            // 1. Handle --register [--silent]
-            // ------------------------------------------------------------
             bool silent = args.Length > 1 && args[1] == "--silent";
 
             if (args.Length >= 1 && args[0] == "--register")
             {
-                RegisterHttpHttpsHandlers();
+                // Create per-user registration entries so Settings will list this app as a candidate.
+                try
+                {
+                    RegisterHttpHttpsHandlers();
+                }
+                catch (Exception ex)
+                {
+                    MessageBox(IntPtr.Zero, $"Registration failed: {ex.Message}", "MigrationBrowser", 0x10);
+                    return 1;
+                }
 
-                if (silent)
+                if (!silent)
                 {
-                    SetAsDefaultViaAPI();
-                    Console.WriteLine("MigrationBrowser registered and set as default (silent mode).");
+                    // Interactive flow: prompt to open Default Apps so user can make MigrationBrowser the default.
+                    PromptToOpenDefaultApps();
                 }
-                else
-                {
-                    PromptToSetAsDefault();
-                    Console.WriteLine("Registration complete.");
-                }
+
+                // In silent mode do not show UI; return success after creating HKCU entries.
                 return 0;
             }
 
-            // ------------------------------------------------------------
-            // 2. Normal operation: open Edge
-            // ------------------------------------------------------------
+            // Normal operation: open Edge with or without URL
             string? edgePath = GetEdgePath();
             if (string.IsNullOrEmpty(edgePath))
             {
@@ -52,22 +54,16 @@ namespace MigrationBrowser
             }
 
             string arguments;
-
             if (args.Length == 0)
             {
-                // No URL → open Edge normally
                 arguments = "";
             }
             else
             {
                 string url = args[0].Trim();
-
                 var patterns = LoadUrlPatterns();
                 bool matches = patterns.Any(p => Regex.IsMatch(url, p, RegexOptions.IgnoreCase));
-
-                arguments = matches
-                    ? $"--inprivate \"{url}\""
-                    : $"\"{url}\"";
+                arguments = matches ? $"--inprivate \"{url}\"" : $"\"{url}\"";
             }
 
             try
@@ -82,95 +78,88 @@ namespace MigrationBrowser
             catch (Exception ex)
             {
                 MessageBox(IntPtr.Zero, $"Failed to start Edge: {ex.Message}", "MigrationBrowser", 0x10);
+                return 1;
             }
 
             return 0;
         }
 
         // ----------------------------------------------------------------
-        // Manual registration
+        // Create per-user ProgId + Capabilities so Settings lists the app
         // ----------------------------------------------------------------
         private static void RegisterHttpHttpsHandlers()
         {
             string exePath = Process.GetCurrentProcess().MainModule!.FileName;
             string command = $"\"{exePath}\" \"%1\"";
 
-            using var progIdKey = Registry.CurrentUser.CreateSubKey($@"Software\Classes\{ProgId}");
-            progIdKey.SetValue("", $"URL:{ProgId} Protocol");
-            progIdKey.SetValue("URL Protocol", "");
-
-            using var iconKey = progIdKey.CreateSubKey("DefaultIcon");
-            iconKey.SetValue("", $"\"{exePath}\",1");
-
-            using var shellKey = progIdKey.CreateSubKey(@"shell\open\command");
-            shellKey.SetValue("", command);
-
-            foreach (string proto in Protocols)
+            // 1) ProgId (protocol handler) under HKCU\Software\Classes\<ProgId>
+            using (var progIdKey = Registry.CurrentUser.CreateSubKey($@"Software\Classes\{ProgId}"))
             {
-                string userChoiceKey = $@"Software\Microsoft\Windows\Shell\Associations\UrlAssociations\{proto}\UserChoice";
-                using var key = Registry.CurrentUser.CreateSubKey(userChoiceKey);
-                key.SetValue("ProgId", ProgId);
-                key.SetValue("Hash", "AAAAAAAAAAAAAAAAAAAAAA==");
+                progIdKey.SetValue("", $"URL:{ProgId} Protocol");
+                progIdKey.SetValue("URL Protocol", "");
+                using var iconKey = progIdKey.CreateSubKey("DefaultIcon");
+                iconKey.SetValue("", $"\"{exePath}\",1");
+                using var shellKey = progIdKey.CreateSubKey(@"shell\open\command");
+                shellKey.SetValue("", command);
+            }
+
+            // 2) Capabilities under HKCU\Software\<AppRegRoot>\Capabilities
+            string capabilitiesRoot = $@"{AppRegRoot}\Capabilities";
+            using (var capKey = Registry.CurrentUser.CreateSubKey(capabilitiesRoot))
+            {
+                capKey.SetValue("ApplicationName", "MigrationBrowser");
+                capKey.SetValue("ApplicationDescription", "Handles web links and opens matching URLs in InPrivate mode");
+            }
+
+            // 3) URLAssociations under Capabilities
+            using (var urlAssoc = Registry.CurrentUser.CreateSubKey($@"{capabilitiesRoot}\URLAssociations"))
+            {
+                urlAssoc.SetValue("http", ProgId);
+                urlAssoc.SetValue("https", ProgId);
+            }
+
+            // 4) Tell Windows where to find the Capabilities (RegisteredApplications)
+            using (var regApps = Registry.CurrentUser.CreateSubKey(@"Software\RegisteredApplications"))
+            {
+                regApps.SetValue("MigrationBrowser", $@"{capabilitiesRoot}");
             }
         }
 
         // ----------------------------------------------------------------
-        // Prompt (only if not --silent)
+        // Interactive helper to open Default Apps settings
         // ----------------------------------------------------------------
-        private static void PromptToSetAsDefault()
+        private static void PromptToOpenDefaultApps()
         {
-            int result = MessageBox(
-                IntPtr.Zero,
-                "Set MigrationBrowser as your default web browser?\n\n" +
-                "This will allow it to handle all web links and apply InPrivate mode for matching URLs.",
+            int result = MessageBox(IntPtr.Zero,
+                "MigrationBrowser is registered. Do you want to open Default apps settings now so you can select it as the default browser?",
                 "MigrationBrowser - Set as Default",
                 0x4 | 0x30); // Yes/No + Question
 
             if (result == 6) // Yes
+                OpenDefaultAppsSettings();
+        }
+
+        private static void OpenDefaultAppsSettings()
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo("ms-settings:defaultapps") { UseShellExecute = true });
+            }
+            catch
             {
                 try
                 {
-                    SetAsDefaultViaAPI();
-                    MessageBox(IntPtr.Zero, "MigrationBrowser is now your default browser!", "Success", 0x40);
+                    Process.Start(new ProcessStartInfo("control.exe", "/name Microsoft.DefaultPrograms") { UseShellExecute = true });
                 }
-                catch (Exception ex)
+                catch
                 {
-                    MessageBox(IntPtr.Zero, $"Failed to set default: {ex.Message}\n\nPlease set it manually in Settings.", "Error", 0x10);
+                    MessageBox(IntPtr.Zero, "Unable to open Default Apps settings. Please open Settings → Apps → Default apps and select MigrationBrowser.", "MigrationBrowser", 0x10);
                 }
             }
         }
 
         // ----------------------------------------------------------------
-        // Silent: Set as default via API
-        // ----------------------------------------------------------------
-        private static void SetAsDefaultViaAPI()
-        {
-            var clsid = new Guid("4ce576fa-83dc-4F88-951c-9d0782b4e376");
-            var type = Type.GetTypeFromCLSID(clsid);
-            dynamic shell = Activator.CreateInstance(type)!;
-
-            foreach (string proto in Protocols)
-            {
-                shell.SetAppAsDefault(ProgId, proto, 0);
-            }
-        }
-
-        // ----------------------------------------------------------------
-        // COM & MessageBox
-        // ----------------------------------------------------------------
-        [ComImport, Guid("4ce576fa-83dc-4F88-951c-9d0782b4e376"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-        private interface IApplicationAssociationRegistration
-        {
-            void SetAppAsDefault([MarshalAs(UnmanagedType.LPWStr)] string pszAppId,
-                                 [MarshalAs(UnmanagedType.LPWStr)] string pszQuery,
-                                 uint atQueryType);
-        }
-
-        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-        private static extern int MessageBox(IntPtr hWnd, string text, string caption, uint type);
-
-        // ----------------------------------------------------------------
-        // Load URL patterns
+        // Load URL patterns from registry
         // ----------------------------------------------------------------
         private static List<string> LoadUrlPatterns()
         {
@@ -193,7 +182,7 @@ namespace MigrationBrowser
         }
 
         // ----------------------------------------------------------------
-        // Get Edge path
+        // Get Edge path from registry
         // ----------------------------------------------------------------
         private static string? GetEdgePath()
         {
@@ -203,6 +192,20 @@ namespace MigrationBrowser
                 return key?.GetValue(null) as string;
             }
             catch { return null; }
+        }
+
+        // ----------------------------------------------------------------
+        // Minimal MessageBox P/Invoke
+        // ----------------------------------------------------------------
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        private static extern int MessageBox(IntPtr hWnd, string text, string caption, uint type);
+
+        // Safe argument quoting helper (use when building Arguments)
+        private static string QuoteArgument(string arg)
+        {
+            if (string.IsNullOrEmpty(arg)) return "\"\"";
+            // Basic safe quoting for command line: escape embedded quotes
+            return "\"" + arg.Replace("\"", "\\\"") + "\"";
         }
     }
 }

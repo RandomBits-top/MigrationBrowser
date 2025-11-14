@@ -1,6 +1,11 @@
 # MigrationBrowser
 A helper browser that can be controlled via GPO to force certain URLs to open in private browser mode.
 
+During a migration phase where users are transitioning from legacy internal web applications to new environments, especially when changing identities, it is often necessary that certain URLs are opened in a private browsing mode to avoid issues with cached data, cookies, or session information.   While it is possible to setup desktop icons to open a web browser in private browsing mode, it requires the end-user to cut-and-paste URLs.
+MigrationBrowser is a lightweight executable that can be set as the default web browser. It checks URLs against a list of patterns defined in the registry and opens matching URLs in InPrivate mode, while all other URLs open in normal mode.
+
+It is intended to be installed via SCCM/MECM/GPO and configured via GPO registry settings.
+
 ## Usage
 | Command | Behavior |
 | ------------------------------------------- | ------------------------------------------- |
@@ -43,4 +48,17 @@ HKEY_CURRENT_USER\Software\MigrationBrowser\UrlPatterns\1 = REG_SZ "^https://int
 ; Add URL Pattern 2
 HKEY_CURRENT_USER\Software\MigrationBrowser\UrlPatterns\2 = REG_SZ "^https://legacy\.app\.internal/.*"
 ```
+## Update default browser
+* DISM import: Dism /Online /Import-DefaultAppAssociations:C:\DefaultAssoc.xml
+* For enterprise deployment use Group Policy / MDM:
+* GPO: Computer Configuration > Administrative Templates > Windows Components > File Explorer > Set a default associations configuration file (point to the XML path).
 
+* DefautAssoc.xml
+```
+<?xml version="1.0" encoding="utf-8"?>
+<DefaultAssociations>
+  <!-- Map protocols to your ProgId. Ensure the ProgId ("MigrationBrowser") is properly registered on target machines. -->
+  <Association Identifier="http" ProgId="MigrationBrowser" ApplicationName="MigrationBrowser" />
+  <Association Identifier="https" ProgId="MigrationBrowser" ApplicationName="MigrationBrowser" />
+</DefaultAssociations>
+```
