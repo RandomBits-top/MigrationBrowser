@@ -5,6 +5,12 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+
+    <!-- add one of these -->
+    <!-- Per-target: -->
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <!-- or to support multiple RIDs: -->
+    <!-- <RuntimeIdentifiers>win-x64;win-x86</RuntimeIdentifiers> -->
   </PropertyGroup>
 
 </Project>

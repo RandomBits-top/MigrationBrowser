@@ -24,10 +24,10 @@ jobs:
           dotnet-version: '10.0.x'
 
       - name: Restore
-        run: dotnet restore
+        run: dotnet restore MigrationBrowser.csproj -r win-x64
 
       - name: Build
-        run: dotnet build -c Release --no-restore
+        run: dotnet build MigrationBrowser.csproj -c Release -r win-x64 --no-restore
 
       - name: Publish single-file EXE (win-x64)
         run: |
