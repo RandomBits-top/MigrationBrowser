@@ -1,5 +1,4 @@
 ﻿using Microsoft.Win32;
-using System;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
@@ -14,7 +13,6 @@ namespace MigrationBrowser
         private const string UrlPatternsKey = @"Software\MigrationBrowser\UrlPatterns";
         private const string EdgeAppPathKey = @"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\msedge.exe";
         private const string AppRegRoot = @"Software\MigrationBrowser";
-        private static readonly string[] Protocols = { "http", "https" };
         private const string ProgId = "MigrationBrowser";
 
         // --------------------------------------------------------------------
@@ -61,9 +59,44 @@ namespace MigrationBrowser
             else
             {
                 string url = args[0].Trim();
+                
+                // Validate URL format and protocol
+                if (!Uri.TryCreate(url, UriKind.Absolute, out Uri? uri))
+                {
+                    MessageBox(IntPtr.Zero, "Invalid URL format provided.", "MigrationBrowser", 0x10);
+                    return 1;
+                }
+                
+                if (uri.Scheme != "http" && uri.Scheme != "https")
+                {
+                    MessageBox(IntPtr.Zero,
+                        $"Only HTTP and HTTPS protocols are supported. Received: {uri.Scheme}",
+                        "MigrationBrowser", 0x10);
+                    return 1;
+                }
+                
+                // Check URL patterns with timeout protection
                 var patterns = LoadUrlPatterns();
-                bool matches = patterns.Any(p => Regex.IsMatch(url, p, RegexOptions.IgnoreCase));
-                arguments = matches ? $"--inprivate \"{url}\"" : $"\"{url}\"";
+                bool matches = false;
+                foreach (var pattern in patterns)
+                {
+                    try
+                    {
+                        if (Regex.IsMatch(url, pattern, RegexOptions.IgnoreCase, TimeSpan.FromMilliseconds(100)))
+                        {
+                            matches = true;
+                            break;
+                        }
+                    }
+                    catch (RegexMatchTimeoutException)
+                    {
+                        // Skip patterns that timeout
+                        continue;
+                    }
+                }
+                
+                // Use secure argument quoting
+                arguments = matches ? $"--inprivate {QuoteArgument(url)}" : QuoteArgument(url);
             }
 
             try
@@ -173,7 +206,24 @@ namespace MigrationBrowser
                     {
                         string? val = key.GetValue(name) as string;
                         if (!string.IsNullOrWhiteSpace(val))
-                            list.Add(val.Trim());
+                        {
+                            string pattern = val.Trim();
+                            // Validate regex pattern before adding
+                            try
+                            {
+                                // Test pattern with timeout to ensure it's valid and not catastrophic
+                                new Regex(pattern, RegexOptions.None, TimeSpan.FromMilliseconds(10));
+                                list.Add(pattern);
+                            }
+                            catch (ArgumentException)
+                            {
+                                // Skip invalid regex patterns
+                            }
+                            catch (RegexMatchTimeoutException)
+                            {
+                                // Skip patterns that are too complex
+                            }
+                        }
                     }
                 }
             }
@@ -189,7 +239,26 @@ namespace MigrationBrowser
             try
             {
                 using var key = Registry.LocalMachine.OpenSubKey(EdgeAppPathKey);
-                return key?.GetValue(null) as string;
+                string? edgePath = key?.GetValue(null) as string;
+                
+                // Validate the path exists and is actually Edge
+                if (!string.IsNullOrEmpty(edgePath) && File.Exists(edgePath))
+                {
+                    try
+                    {
+                        FileVersionInfo versionInfo = FileVersionInfo.GetVersionInfo(edgePath);
+                        if (versionInfo.ProductName?.Contains("Microsoft Edge", StringComparison.OrdinalIgnoreCase) ?? false)
+                        {
+                            return edgePath;
+                        }
+                    }
+                    catch
+                    {
+                        // If we can't verify it's Edge, don't use it
+                    }
+                }
+                
+                return null;
             }
             catch { return null; }
         }
