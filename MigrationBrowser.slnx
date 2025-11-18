@@ -1,3 +1,4 @@
 <Solution>
   <Project Path="MigrationBrowser.csproj" />
+  <Project Path="MigrationBrowserTests/MigrationBrowserTests.csproj" Id="293038e8-8089-4c6c-8aa3-f20b47a6b298" />
 </Solution>
