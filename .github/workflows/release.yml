@@ -23,9 +23,7 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
-      # THIS IS THE CRITICAL FIX FOR .NET 10 + self-contained + win-x64
-      - name: Install Windows Desktop Runtime workload
-        run: dotnet workload install microsoft-windowsdesktop-runtime
+
 
       - name: Restore dependencies
         run: dotnet restore src/MigrationBrowser.csproj
