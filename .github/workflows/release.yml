@@ -11,54 +11,72 @@ permissions:
 
 jobs:
   build-and-release:
-    name: Build and publish single EXE
+    name: Build and publish single-file EXE (win-x64)
     runs-on: windows-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup .NET SDK
-        uses: actions/setup-dotnet@v3
+      - name: Setup .NET 10 SDK
+        uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
 
-      - name: Restore
-        run: dotnet restore
+      # THIS IS THE CRITICAL FIX FOR .NET 10 + self-contained + win-x64
+      - name: Install Windows Desktop Runtime workload
+        run: dotnet workload install microsoft-windowsdesktop-runtime
 
-      - name: Build
-        run: dotnet build -c Release --no-restore
+      - name: Restore dependencies
+        run: dotnet restore src/MigrationBrowser.csproj
 
-      - name: Publish single-file EXE (win-x64)
+      - name: Build (Release)
+        run: dotnet build src/MigrationBrowser.csproj -c Release --no-restore
+
+      - name: Publish single-file self-contained EXE
         run: |
-          rm -Recurse -Force ./artifacts -ErrorAction SilentlyContinue
-          dotnet publish src/MigrationBrowser.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -o ./artifacts/publish --no-build
+          # Clean previous artifacts
+          if (Test-Path ./artifacts) { Remove-Item -Recurse -Force ./artifacts }
+          New-Item -ItemType Directory -Path ./artifacts/publish | Out-Null
 
-      - name: Zip artifact
+          dotnet publish src/MigrationBrowser.csproj `
+            -c Release `
+            -r win-x64 `
+            --self-contained true `
+            -p:PublishSingleFile=true `
+            -p:PublishTrimmed=false `
+            -p:IncludeNativeLibrariesForSelfExtract=true `
+            -p:IncludeAllContentForSelfExtract=true `
+            --no-build `
+            -o ./artifacts/publish
+
+      - name: Create ZIP package
         shell: pwsh
         run: |
           $tag = "${{ github.ref_name }}"
-          $zip = "artifacts/MigrationBrowser-$tag-win-x64.zip"
-          if (Test-Path $zip) { Remove-Item $zip -Force }
-          Compress-Archive -Path ./artifacts/publish/* -DestinationPath $zip -Force
-          Write-Host "Zip created: $zip"
-        env:
-          GITHUB_REF_NAME: ${{ github.ref_name }}
+          $zipName = "MigrationBrowser-$tag-win-x64.zip"
+          $zipPath = "artifacts/$zipName"
 
-      - name: Create GitHub release
+          Compress-Archive -Path ./artifacts/publish/* -DestinationPath $zipPath -Force
+          Write-Host "Created $zipPath"
+
+      - name: Create GitHub Release
         id: create_release
         uses: actions/create-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: ${{ github.ref_name }}
-          release_name: ${{ github.ref_name }}
+          release_name: Release ${{ github.ref_name }}
           body: |
-            Release ${{ github.ref_name }} - single-file Windows EXE (win-x64)
+            MigrationBrowser ${{ github.ref_name }}
+
+            Single-file, self-contained Windows executable (win-x64)
+            Requires Windows 10 or later.
           draft: false
           prerelease: false
 
-      - name: Upload release asset
+      - name: Upload ZIP to Release
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
