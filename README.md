@@ -12,7 +12,7 @@ It is intended to be installed via SCCM/MECM/GPO and configured via GPO registry
 | MigrationBrowser.exe | Opens Edge (normal) |
 | MigrationBrowser.exe <url> | Opens Edge (InPrivate if URL matches pattern) |
 | MigrationBrowser.exe --register | Registers + prompts to set as default broswer |
-| MigrationBrowser.exe --register --silent | Registers silently + sets as default browser (no prompts) |
+| MigrationBrowser.exe --register --silent | Registers silently (no prompts) |
 
 # Deployment Examples
 
